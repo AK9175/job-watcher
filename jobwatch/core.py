@@ -100,7 +100,9 @@ def run(
                 title = f"Job opened: {job['label']}"
                 message = f"{job['label']} is now accepting applications."
                 sent = notifier.notify(title, message, result.url)
-                if not sent:
+                if sent:
+                    print("         notification sent")
+                else:
                     print("         notification failed to send (state still updated)")
 
         state[result.url] = {
