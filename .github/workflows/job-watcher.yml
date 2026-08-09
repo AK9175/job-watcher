@@ -1,0 +1,67 @@
+name: Job Watcher
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: job-watcher-state
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run watcher
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python main.py --verbose
+
+      - name: Commit state.json if changed
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- state.json)" ]; then
+            echo "state.json unchanged, nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -m "Update job watcher state"
+          if ! git push; then
+            echo "::error::failed to push updated state.json — a transition may be lost or duplicated on the next run"
+            exit 1
+          fi
+
+      - name: Keepalive heartbeat
+        if: always()
+        run: |
+          set -euo pipefail
+          last_commit_epoch=$(git log -1 --format=%ct)
+          now_epoch=$(date +%s)
+          age_days=$(( (now_epoch - last_commit_epoch) / 86400 ))
+          if [ "$age_days" -lt 5 ]; then
+            echo "last commit is ${age_days}d old, no heartbeat needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .heartbeat
+          git add .heartbeat
+          git commit -m "chore: keepalive heartbeat"
+          if ! git push; then
+            echo "::error::failed to push keepalive heartbeat — repo may go idle and GitHub could disable the schedule"
+            exit 1
+          fi
